@@ -1,0 +1,197 @@
+#!/usr/bin/python
+# -*- encoding: utf-8 -*-
+import re, time, io, itertools, zipfile, base64, traceback, logging
+from tornado.ioloop import IOLoop
+from tornado.web import RequestHandler, Application, HTTPError, url, asynchronous
+from tornado.escape import url_escape
+from tornado.httpclient import AsyncHTTPClient
+from tornado import gen
+from lxml import etree
+import suds
+
+WSCURRICULO_URL = 'http://localhost:7080/srvcurriculo/WSCurriculo?wsdl'
+LATTES_SEARCH_URL = 'http://buscatextual.cnpq.br/buscatextual/busca.do?metodo=forwardPaginaResultados&registros=%d;%d&query=%s'
+LATTES_EXACT_SEARCH_URL = 'https://wwws.cnpq.br/cvlattesweb/PKG_IDENTIFICACAO_COAUTOR.COAUTOR?f_cod=%s&f_tipo_busca=N&f_nome=%s'
+SEARCH_INTERVAL = 1  # segundos
+PORT = 7070
+
+
+class WSCurriculo(suds.client.Client):
+    def __init__(self):
+        suds.client.Client.__init__(self, WSCURRICULO_URL, nosend=True)
+        self.cli = AsyncHTTPClient()
+    @gen.coroutine
+    def _execCtx(self, ctx):
+        url = ctx.client.location()
+        response = yield self.cli.fetch(url, body=str(ctx.envelope), method='POST',
+                                        headers=ctx.client.headers())
+        if response.error:
+            raise HTTPError(response.code, response.body)
+        raise gen.Return(ctx.succeeded(response.body))
+    @gen.coroutine
+    def obterCV(self, idCNPq):
+        b64 = yield self._execCtx(self.service.getCurriculoCompactado(id=idCNPq))
+        if b64 is None:
+            raise gen.Return(None)
+        xmlz = zipfile.ZipFile(io.BytesIO(base64.b64decode(b64)))
+        xml = xmlz.read(xmlz.namelist()[0])
+        raise gen.Return(etree.fromstring(xml))
+
+ws = WSCurriculo()
+
+
+def singleTag(tagList):
+    if len(tagList) != 1:
+        raise ValueError('len(%s) != 1' % repr(tagList))
+    return tagList[0]
+
+def electBestNameVariant(person):
+    personDict = dict(person)
+    name = personDict['name']
+    best = (0, (None, None))
+    maxLastName = ''
+    # Procura nomes do tipo "Sobrenome, Nome"
+    for k,v in person:
+        if k == 'nameVariant':
+            try: lastName, firstName = (s.strip() for s in v.split(','))
+            except: continue  # Formato incorreto
+            curName = '%s %s' % (firstName, lastName)
+            # Elege o primeiro que contiver o nome completo da Receita Federal
+            if curName.upper() == name.upper():
+                return (firstName, lastName)
+            # Elege o maior
+            best = max(best, (len(curName), (firstName, lastName)))
+            if len(lastName) > len(maxLastName):
+                maxLastName = lastName
+    # Usa última palavra como sobrenome se não tiver encontrado nenhum
+    lastName = maxLastName if maxLastName != '' else name.split()[-1]
+    # Tenta montar um nome usando o maior sobrenome encontrado
+    if name.upper().endswith(' '+lastName.upper()):
+        firstName = name[:-len(lastName)-1]
+        best = max(best, (len(name), (firstName, lastName)))
+    return best[1]
+
+def etreeToPerson(root, idCNPq=None):
+    if root is None:
+        return None
+    person = []
+    person.append(('idCNPq', idCNPq if idCNPq is not None else
+                   root.get('NUMERO-IDENTIFICADOR')))
+
+    dadosGerais = singleTag(root.xpath('./DADOS-GERAIS'))
+    person.append(('name', dadosGerais.get('NOME-COMPLETO')))
+    for nameVar in dadosGerais.get('NOME-EM-CITACOES-BIBLIOGRAFICAS').split(';'):
+        person.append(('nameVariant', nameVar.strip()))
+    enderecoProfissional = dadosGerais.xpath('./ENDERECO/ENDERECO-PROFISSIONAL')
+
+    firstName, lastName = electBestNameVariant(person)
+    person.append(('firstName', firstName))
+    person.append(('lastName', lastName))
+
+    if enderecoProfissional is not None and len(enderecoProfissional) != 0:
+        instituicao = enderecoProfissional[0].get('NOME-INSTITUICAO-EMPRESA')
+        if instituicao is not None and instituicao != '':
+            person.append(('institution', instituicao))
+
+    return person
+
+class XMLResults(object):
+    def __init__(self, person=None):
+        self.root = etree.Element('results')
+        if person is not None:
+            self.addPerson(person)
+    def addPerson(self, kvlist=[], **kwargs):
+        person = etree.SubElement(self.root, 'person')
+        for k,v in itertools.chain(kvlist, kwargs.iteritems()):
+            if v != None:
+                etree.SubElement(person, k).text = v
+    def __str__(self):
+        return etree.tostring(self.root, pretty_print=True)
+    def send(self, handler):
+        handler.set_header('Content-Type', 'application/xml')
+        handler.write(str(self))
+
+
+class RateLimit(object):
+    def __init__(self, interval):
+        self.interval = interval
+    def __call__(decorator, method):
+        method._last = 0
+        def newMethod(self, *args, **kwargs):
+            if time.time() - method._last <= decorator.interval:
+                # http://i.stack.imgur.com/Y84Lj.jpg
+                raise HttpError(429, reason='Too Many Requests')
+            method._last = time.time()
+            return method(self, *args, **kwargs)
+        return newMethod
+
+
+class RequestHandlerWithEmptyResultOnError(RequestHandler):
+    def write_error(self, status_code, **kwargs):
+        XMLResults().send(self)
+        self.finish()
+
+
+class ByIdHandler(RequestHandlerWithEmptyResultOnError):
+    @gen.coroutine
+    def get(self, idCNPq):
+        root = yield ws.obterCV(idCNPq)
+        person = etreeToPerson(root, idCNPq)
+        if person is None:
+            raise HttpError(404)
+        XMLResults(person).send(self)
+
+
+class SearchHandler(RequestHandlerWithEmptyResultOnError):
+    logger = logging.getLogger('SearchHandler')
+
+    @RateLimit(SEARCH_INTERVAL)
+    @gen.coroutine
+    def get(self):
+        text = self.get_argument('q')
+        query = ' '.join('+idx_nme_pessoa:'+s for s in re.split(r'\s+', text))
+        start = int(self.get_argument('start', 0))
+        rows = int(self.get_argument('rows', 4))
+
+        http_client = AsyncHTTPClient()
+        response = yield http_client.fetch(LATTES_SEARCH_URL
+                                           % (start, rows, url_escape(query)))
+        if response.error:
+            logging.error(response.body)
+            raise HttpError(500)
+
+        ids = set()
+        for m in re.finditer(r"javascript:abreDetalhe\('([^']+)'[^>]+>([^<]+)",
+                             response.body):
+            idBuscaTextual, name = m.groups()
+            response = yield http_client.fetch(LATTES_EXACT_SEARCH_URL
+                                               % (url_escape(idBuscaTextual), url_escape(name)),
+                                               validate_cert=False)
+            if response.error:
+                logging.error(response.body)
+                continue
+            for m in re.finditer(r'<option value="(\d+)\|([^"]+)">', response.body):
+                if m.group(2).lower() == name.lower():
+                    ids.add(m.group(1))
+
+        results = XMLResults()
+        for idCNPq in ids:
+            try:
+                root = yield ws.obterCV(idCNPq)
+                person = etreeToPerson(root, idCNPq)
+                if person is not None:
+                    results.addPerson(person)
+            except:
+                traceback.print_exc()
+        results.send(self)
+
+
+def main():
+    Application([
+        url(r'/byid/(\d+)', ByIdHandler),
+        url(r'/search', SearchHandler),
+    ]).listen(PORT, '127.0.0.1')
+    IOLoop.current().start()
+
+if __name__ == '__main__':
+    main()
