@@ -45,11 +45,6 @@ def singleTag(tagList):
         raise ValueError('len(%s) != 1' % repr(tagList))
     return tagList[0]
 
-def nameVariants(person):
-    for k,v in person:
-        if k == 'nameVariant':
-            yield v
-
 def findUncap(name, variants):
     for v in variants:
         start = v.upper().find(name.upper())
