@@ -45,24 +45,50 @@ def singleTag(tagList):
         raise ValueError('len(%s) != 1' % repr(tagList))
     return tagList[0]
 
-def electBestNameVariant(person):
-    personDict = dict(person)
-    name = personDict['name']
+def nameVariants(person):
+    for k,v in person:
+        if k == 'nameVariant':
+            yield v
+
+def findUncap(name, variants):
+    for v in variants:
+        start = v.upper().find(name.upper())
+        if start != -1:
+            substr = v[start:start+len(name)]
+            if substr != substr.upper():
+                return substr
+    return None
+
+def heuristicallyUncap(name):
+    if name != name.upper():
+        return name
+    nobiliaryParticles = {'de','dit','la','von','af','der','und','zu','of'}
+    return ' '.join(word.capitalize()
+                    if word.lower() not in nobiliaryParticles
+                    else word.lower()
+                    for word in name.split())
+
+def uncap(name, variants):
+    fromLattes = findUncap(name, variants)
+    if fromLattes != None:
+        return fromLattes
+    return heuristicallyUncap(name)
+
+def electBestNameVariant(name, variants):
     best = (0, (None, None))
     maxLastName = ''
     # Procura nomes do tipo "Sobrenome, Nome"
-    for k,v in person:
-        if k == 'nameVariant':
-            try: lastName, firstName = (s.strip() for s in v.split(','))
-            except: continue  # Formato incorreto
-            curName = '%s %s' % (firstName, lastName)
-            # Elege o primeiro que contiver o nome completo da Receita Federal
-            if curName.upper() == name.upper():
-                return (firstName, lastName)
-            # Elege o maior
-            best = max(best, (len(curName), (firstName, lastName)))
-            if len(lastName) > len(maxLastName):
-                maxLastName = lastName
+    for v in variants:
+        try: lastName, firstName = (s.strip() for s in v.split(','))
+        except: continue  # Formato incorreto
+        curName = '%s %s' % (firstName, lastName)
+        # Elege o primeiro que contiver o nome completo da Receita Federal
+        if curName.upper() == name.upper():
+            return (firstName, lastName)
+        # Elege o maior
+        best = max(best, (len(curName), (firstName, lastName)))
+        if len(lastName) > len(maxLastName):
+            maxLastName = lastName
     # Usa última palavra como sobrenome se não tiver encontrado nenhum
     lastName = maxLastName if maxLastName != '' else name.split()[-1]
     # Tenta montar um nome usando o maior sobrenome encontrado
@@ -79,14 +105,18 @@ def etreeToPerson(root, idCNPq=None):
                    root.get('NUMERO-IDENTIFICADOR')))
 
     dadosGerais = singleTag(root.xpath('./DADOS-GERAIS'))
-    person.append(('name', dadosGerais.get('NOME-COMPLETO')))
+    name = dadosGerais.get('NOME-COMPLETO')
+    person.append(('name', name))
+    variants = []
     for nameVar in dadosGerais.get('NOME-EM-CITACOES-BIBLIOGRAFICAS').split(';'):
-        person.append(('nameVariant', nameVar.strip()))
+        nameVar = nameVar.strip()
+        variants.append(nameVar)
+        person.append(('nameVariant', nameVar))
     enderecoProfissional = dadosGerais.xpath('./ENDERECO/ENDERECO-PROFISSIONAL')
 
-    firstName, lastName = electBestNameVariant(person)
-    person.append(('firstName', firstName))
-    person.append(('lastName', lastName))
+    firstName, lastName = electBestNameVariant(name, variants)
+    person.append(('firstName', uncap(firstName, variants)))
+    person.append(('lastName', uncap(lastName, variants)))
 
     if enderecoProfissional is not None and len(enderecoProfissional) != 0:
         instituicao = enderecoProfissional[0].get('NOME-INSTITUICAO-EMPRESA')
