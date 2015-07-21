@@ -21,14 +21,14 @@ $ curl 'http://localhost:7070/search?q=panepucci'
     <name>Patricia Viana Panepucci</name>
     <nameVariant>PANEPUCCI, P. V.</nameVariant>
     <firstName>Patricia Viana</firstName>
-    <lastName>PANEPUCCI</lastName>
+    <lastName>Panepucci</lastName>
   </person>
   <person>
     <idCNPq>0882937117956745</idCNPq>
     <name>Giovana Troya Marques Panepucci</name>
     <nameVariant>PANEPUCCI, G. T. M.</nameVariant>
     <firstName>Giovana Troya Marques</firstName>
-    <lastName>PANEPUCCI</lastName>
+    <lastName>Panepucci</lastName>
     <institution>Faculdade Bandeirantes</institution>
   </person>
   <person>
@@ -36,14 +36,14 @@ $ curl 'http://localhost:7070/search?q=panepucci'
     <name>Luciano Gabriel Panepucci</name>
     <nameVariant>PANEPUCCI, L. G.</nameVariant>
     <firstName>Luciano Gabriel</firstName>
-    <lastName>PANEPUCCI</lastName>
+    <lastName>Panepucci</lastName>
   </person>
   <person>
     <idCNPq>9110045494449064</idCNPq>
     <name>Horacio Carlos Panepucci</name>
     <nameVariant>PANEPUCCI, H. C.</nameVariant>
     <firstName>Horacio Carlos</firstName>
-    <lastName>PANEPUCCI</lastName>
+    <lastName>Panepucci</lastName>
     <institution>Instituto de F&#237;sica de S&#227;o Carlos</institution>
   </person>
 </results>
@@ -59,8 +59,8 @@ $ curl 'http://localhost:7070/byid/0920066398294419'
     <name>Targino de Ara&#250;jo Filho</name>
     <nameVariant>ARA&#218;JO FILHO, T.</nameVariant>
     <nameVariant>ARA&#218;JO FILHO, TARGINO DE</nameVariant>
-    <firstName>TARGINO DE</firstName>
-    <lastName>ARA&#218;JO FILHO</lastName>
+    <firstName>Targino de</firstName>
+    <lastName>Ara&#250;jo Filho</lastName>
     <institution>Universidade Federal de S&#227;o Carlos</institution>
   </person>
 </results>
