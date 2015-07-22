@@ -1,6 +1,6 @@
 #!/usr/bin/python
 # -*- encoding: utf-8 -*-
-import re, time, io, itertools, zipfile, base64, traceback, logging
+import re, time, io, itertools, zipfile, base64, traceback, logging, unicodedata
 from tornado.ioloop import IOLoop
 from tornado.web import RequestHandler, Application, HTTPError, url, asynchronous
 from tornado.escape import url_escape
@@ -39,6 +39,15 @@ class WSCurriculo(suds.client.Client):
 
 ws = WSCurriculo()
 
+
+def norm(s):
+    if not isinstance(s, unicode):
+        s = s.decode('utf-8')
+    return ''.join(c for c in unicodedata.normalize('NFD', s)
+                   if unicodedata.category(c) != 'Mn')\
+             .encode('ascii','ignore')\
+             .strip()\
+             .lower()
 
 def singleTag(tagList):
     if len(tagList) != 1:
@@ -173,7 +182,7 @@ class SearchHandler(RequestHandlerWithEmptyResultOnError):
     @RateLimit(SEARCH_INTERVAL)
     @gen.coroutine
     def get(self):
-        text = self.get_argument('q')
+        text = norm(self.get_argument('q'))
         query = ' '.join('+idx_nme_pessoa:'+s for s in re.split(r'\s+', text))
         start = int(self.get_argument('start', 0))
         rows = int(self.get_argument('rows', 4))
