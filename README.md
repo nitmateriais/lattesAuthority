@@ -4,7 +4,7 @@ Serviço REST para alimentar uma autoridade de nomes baseada no Currículo Latte
 ## Instalando
 
 ```
-sudo apt-get install python-tornado python-lxml python-suds
+sudo apt-get install python-tornado python-lxml python-suds python-repoze.lru
 sudo useradd -r restpy
 sudo make install
 ```

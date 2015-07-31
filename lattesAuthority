@@ -6,6 +6,7 @@ from tornado.web import RequestHandler, Application, HTTPError, url, asynchronou
 from tornado.escape import url_escape
 from tornado.httpclient import AsyncHTTPClient
 from tornado import gen
+from repoze.lru import LRUCache
 from lxml import etree
 import suds
 
@@ -160,6 +161,20 @@ class RateLimit(object):
         return newMethod
 
 
+class CachedXMLResults(object):
+    def __init__(self, size):
+        self.cache = LRUCache(size)
+    def __call__(decorator, method):
+        @gen.coroutine
+        def newMethod(self, *args):
+            results = decorator.cache.get(args)
+            if not results:
+                results = yield method(self, *args)
+            decorator.cache.put(args, results)
+            results.send(self)
+        return newMethod
+
+
 class RequestHandlerWithEmptyResultOnError(RequestHandler):
     def write_error(self, status_code, **kwargs):
         XMLResults().send(self)
@@ -167,26 +182,31 @@ class RequestHandlerWithEmptyResultOnError(RequestHandler):
 
 
 class ByIdHandler(RequestHandlerWithEmptyResultOnError):
+    @CachedXMLResults(8192)
     @gen.coroutine
     def get(self, idCNPq):
         root = yield ws.obterCV(idCNPq)
         person = etreeToPerson(root, idCNPq)
         if person is None:
             raise HttpError(404)
-        XMLResults(person).send(self)
+        raise gen.Return(XMLResults(person))
 
 
 class SearchHandler(RequestHandlerWithEmptyResultOnError):
     logger = logging.getLogger('SearchHandler')
 
-    @RateLimit(SEARCH_INTERVAL)
     @gen.coroutine
     def get(self):
         text = norm(self.get_argument('q'))
         query = ' '.join('+idx_nme_pessoa:'+s for s in re.split(r'\s+', text))
         start = int(self.get_argument('start', 0))
         rows = int(self.get_argument('rows', 4))
+        yield self._get(query, start, rows)
 
+    @CachedXMLResults(2048)
+    @RateLimit(SEARCH_INTERVAL)
+    @gen.coroutine
+    def _get(self, query, start, rows):
         http_client = AsyncHTTPClient()
         response = yield http_client.fetch(LATTES_SEARCH_URL
                                            % (start, rows, url_escape(query)))
@@ -217,7 +237,7 @@ class SearchHandler(RequestHandlerWithEmptyResultOnError):
                     results.addPerson(person)
             except:
                 traceback.print_exc()
-        results.send(self)
+        raise gen.Return(results)
 
 
 def main():
