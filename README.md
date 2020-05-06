@@ -1,5 +1,6 @@
 # lattesAuthority
 Serviço REST para alimentar uma autoridade de nomes baseada no Currículo Lattes
+O LattesAuthotity é um script de controle de autoridade baseado no Lattes. Para garantir o controle da autoridade, é utilizado o IDLattes e as informações disponíveis na busca textual do Lattes. Este script cria um serviço consumido pelo RI UFSCar.
 
 ## Instalando
 
